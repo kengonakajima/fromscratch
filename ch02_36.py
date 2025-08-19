@@ -82,3 +82,85 @@ data_iter = iter(dataloader)
 inputs, targets = next(data_iter)
 print("Inputs:\n", inputs)
 print("\nTargets:\n", targets)
+
+
+# [42]
+
+input_ids = torch.tensor([2, 3, 5, 1])
+
+# [43]
+vocab_size = 6
+output_dim = 3
+
+torch.manual_seed(123)
+embedding_layer = torch.nn.Embedding(vocab_size, output_dim)
+
+# [44]
+print(embedding_layer.weight)
+
+# [45]
+
+print(embedding_layer(torch.tensor([3])))
+
+print(torch.tensor([3]))
+
+# [46]
+
+print(embedding_layer(input_ids))
+
+# [47]
+
+vocab_size = 50257
+output_dim = 256
+
+token_embedding_layer = torch.nn.Embedding(vocab_size, output_dim)
+
+# [48]
+
+max_length = 4
+dataloader = create_dataloader_v1(
+    raw_text, batch_size=8, max_length=max_length,
+    stride=max_length, shuffle=False
+)
+data_iter = iter(dataloader)
+inputs, targets = next(data_iter)
+
+# [49]
+
+
+print("Token IDs:\n", inputs)
+print("\nInputs shape:\n", inputs.shape)
+
+
+# [50]
+token_embeddings = token_embedding_layer(inputs)
+print(token_embeddings.shape)
+
+# uncomment & execute the following line to see how the embeddings look like
+print(token_embeddings)
+
+
+# [51]
+context_length = max_length
+pos_embedding_layer = torch.nn.Embedding(context_length, output_dim)
+
+# uncomment & execute the following line to see how the embedding layer weights look like
+print(pos_embedding_layer.weight)
+
+# [52]
+
+pos_embeddings = pos_embedding_layer(torch.arange(max_length))
+print(pos_embeddings.shape)
+
+print(torch.arange(max_length))
+
+# uncomment & execute the following line to see how the embeddings look like
+print(pos_embeddings)
+
+# [53]
+
+input_embeddings = token_embeddings + pos_embeddings
+print(input_embeddings.shape)
+
+# uncomment & execute the following line to see how the embeddings look like
+print(input_embeddings)
