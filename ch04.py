@@ -185,3 +185,56 @@ var = out_ln.var(dim=-1, unbiased=False, keepdim=True)
 print("Mean:\n", mean)
 print("Variance:\n", var)
 
+# 4.3 Implementing a feed forward network with GELU activations
+# 4.3 GELU 活性化関数を用いたフィードフォワードネットワークの実装
+# このセクションでは、LLM の Transformer ブロックの一部として使われる小さなニューラルネットワークのサブモジュールを実装します。
+
+# まずは活性化関数から始めます。
+# ディープラーニングでは、ReLU（Rectified Linear Unit） がそのシンプルさと多様なニューラルネットワークにおける有効性のため、一般的に使われています。
+
+# しかし LLM では、従来の ReLU 以外のさまざまな活性化関数が使われます。その代表的なものが GELU（Gaussian Error Linear Unit） と SwiGLU（Swish-Gated Linear Unit） です。
+# ReLUはカクッと折れるが、GELU, SwiGLUは曲線になる。
+# 誤差関数、ガウス分布、
+
+# 実際には近似式が使われる。GPT2もそうなってる
+
+# [15]  Next, let's implement the small neural network module, FeedForward, that we will be using in the LLM's transformer block later:
+# feed forwardは、 transformer blockで使う予定なのね。
+
+
+class FeedForward(nn.Module):
+    def __init__(self, cfg):
+        super().__init__()
+        self.layers = nn.Sequential(
+            nn.Linear(cfg["emb_dim"], 4 * cfg["emb_dim"]),
+            GELU(),
+            nn.Linear(4 * cfg["emb_dim"], cfg["emb_dim"]),
+        )
+
+    def forward(self, x):
+        return self.layers(x)
+
+class GELU(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, x):
+        return 0.5 * x * (1 + torch.tanh(
+            torch.sqrt(torch.tensor(2.0 / torch.pi)) * 
+            (x + 0.044715 * torch.pow(x, 3))
+        ))
+
+    
+# [16]
+
+print(GPT_CONFIG_124M["emb_dim"]) # 768
+
+# [17]
+ffn = FeedForward(GPT_CONFIG_124M)
+
+# input shape: [batch_size, num_token, emb_size]
+x = torch.rand(2, 3, 768) 
+out = ffn(x)
+print(out.shape)
+
+
