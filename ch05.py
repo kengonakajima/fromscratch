@@ -365,3 +365,223 @@ print(perplexity)  # 迷いの度合い 48000ぐらい。約5万の語彙に対�
 
 
 
+
+# 5.1.3 Calculating the training and validation set losses
+
+
+# [16] chapter 2のテキストをつかってみるで
+
+import os
+import urllib.request
+
+file_path = "the-verdict.txt"
+url = "https://raw.githubusercontent.com/rasbt/LLMs-from-scratch/main/ch02/01_main-chapter-code/the-verdict.txt"
+
+if not os.path.exists(file_path):
+    with urllib.request.urlopen(url) as response:
+        text_data = response.read().decode('utf-8')
+    with open(file_path, "w", encoding="utf-8") as file:
+        file.write(text_data)
+else:
+    with open(file_path, "r", encoding="utf-8") as file:
+        text_data = file.read()
+
+        
+
+# [17] A quick check that the text loaded ok by printing the first and last 99 characters
+
+# First 99 characters
+print(text_data[:99])
+
+# [18]
+
+# Last 99 characters
+print(text_data[-99:])
+
+# [19]
+
+total_characters = len(text_data)
+total_tokens = len(tokenizer.encode(text_data))
+
+print("Characters:", total_characters)
+print("Tokens:", total_tokens)
+
+# [20]
+
+from torch.utils.data import Dataset, DataLoader
+
+class GPTDatasetV1(Dataset):
+    def __init__(self, txt, tokenizer, max_length, stride):
+        self.input_ids = []
+        self.target_ids = []
+
+        # Tokenize the entire text
+        token_ids = tokenizer.encode(txt, allowed_special={"<|endoftext|>"})
+        assert len(token_ids) > max_length, "Number of tokenized inputs must at least be equal to max_length+1"
+
+        # Use a sliding window to chunk the book into overlapping sequences of max_length
+        for i in range(0, len(token_ids) - max_length, stride):
+            input_chunk = token_ids[i:i + max_length]
+            target_chunk = token_ids[i + 1: i + max_length + 1]
+            self.input_ids.append(torch.tensor(input_chunk))
+            self.target_ids.append(torch.tensor(target_chunk))
+
+    def __len__(self):
+        return len(self.input_ids)
+
+    def __getitem__(self, idx):
+        return self.input_ids[idx], self.target_ids[idx]
+
+def create_dataloader_v1(txt, batch_size=4, max_length=256, 
+                         stride=128, shuffle=True, drop_last=True,
+                         num_workers=0):
+
+    # Initialize the tokenizer
+    tokenizer = tiktoken.get_encoding("gpt2")
+
+    # Create dataset
+    dataset = GPTDatasetV1(txt, tokenizer, max_length, stride)
+
+    # Create dataloader
+    dataloader = DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=shuffle,
+        drop_last=drop_last,
+        num_workers=num_workers
+    )
+
+    return dataloader
+
+
+
+# Alternatively:
+# from llms_from_scratch.ch02 import create_dataloader_v1
+
+# Train/validation ratio
+train_ratio = 0.90
+split_idx = int(train_ratio * len(text_data))
+train_data = text_data[:split_idx]
+val_data = text_data[split_idx:]
+
+
+torch.manual_seed(123)
+
+train_loader = create_dataloader_v1(
+    train_data,
+    batch_size=2,
+    max_length=GPT_CONFIG_124M["context_length"],
+    stride=GPT_CONFIG_124M["context_length"],
+    drop_last=True,
+    shuffle=True,
+    num_workers=0
+)
+
+val_loader = create_dataloader_v1(
+    val_data,
+    batch_size=2,
+    max_length=GPT_CONFIG_124M["context_length"],
+    stride=GPT_CONFIG_124M["context_length"],
+    drop_last=False,
+    shuffle=False,
+    num_workers=0
+)
+
+
+# [21]
+# Sanity check
+
+if total_tokens * (train_ratio) < GPT_CONFIG_124M["context_length"]:
+    print("Not enough tokens for the training loader. "
+          "Try to lower the `GPT_CONFIG_124M['context_length']` or "
+          "increase the `training_ratio`")
+
+if total_tokens * (1-train_ratio) < GPT_CONFIG_124M["context_length"]:
+    print("Not enough tokens for the validation loader. "
+          "Try to lower the `GPT_CONFIG_124M['context_length']` or "
+          "decrease the `training_ratio`")
+    
+# [22] more check
+
+print("Train loader:")
+for x, y in train_loader:
+    print(x.shape, y.shape)
+
+print("\nValidation loader:")
+for x, y in val_loader:
+    print(x.shape, y.shape)
+    
+
+# [23] Another optional check that the token sizes are in the expected ballpark:
+
+train_tokens = 0
+for input_batch, target_batch in train_loader:
+    train_tokens += input_batch.numel()
+
+val_tokens = 0
+for input_batch, target_batch in val_loader:
+    val_tokens += input_batch.numel()
+
+print("Training tokens:", train_tokens)
+print("Validation tokens:", val_tokens)
+print("All tokens:", train_tokens + val_tokens)
+
+# [24] utils
+
+def calc_loss_batch(input_batch, target_batch, model, device):
+    input_batch, target_batch = input_batch.to(device), target_batch.to(device)
+    logits = model(input_batch)
+    loss = torch.nn.functional.cross_entropy(logits.flatten(0, 1), target_batch.flatten())
+    return loss
+
+
+def calc_loss_loader(data_loader, model, device, num_batches=None):
+    total_loss = 0.
+    if len(data_loader) == 0:
+        return float("nan")
+    elif num_batches is None:
+        num_batches = len(data_loader)
+    else:
+        # Reduce the number of batches to match the total number of batches in the data loader
+        # if num_batches exceeds the number of batches in the data loader
+        num_batches = min(num_batches, len(data_loader))
+    for i, (input_batch, target_batch) in enumerate(data_loader):
+        if i < num_batches:
+            loss = calc_loss_batch(input_batch, target_batch, model, device)
+            total_loss += loss.item()
+        else:
+            break
+    return total_loss / num_batches
+
+# [25]
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+# Note:
+# Uncommenting the following lines will allow the code to run on Apple Silicon chips, if applicable,
+# which is approximately 2x faster than on an Apple CPU (as measured on an M3 MacBook Air).
+# However, the resulting loss values may be slightly different.
+
+#if torch.cuda.is_available():
+#    device = torch.device("cuda")
+#elif torch.backends.mps.is_available():
+#    device = torch.device("mps")
+#else:
+#    device = torch.device("cpu")
+#
+# print(f"Using {device} device.")
+
+
+model.to(device) # no assignment model = model.to(device) necessary for nn.Module classes
+
+
+torch.manual_seed(123) # For reproducibility due to the shuffling in the data loader
+
+with torch.no_grad(): # Disable gradient tracking for efficiency because we are not training, yet
+    train_loss = calc_loss_loader(train_loader, model, device)
+    val_loss = calc_loss_loader(val_loader, model, device)
+
+print("Training loss:", train_loss) # 10.98..
+print("Validation loss:", val_loss) # 10.98..
+
+
