@@ -116,3 +116,156 @@ print("Previous 2nd context vector:", context_vec_2)  # 2つ眼にみつかっ�
 
 
 
+# 3.4 Implementing self-attention with trainable weights
+# 訓練可能な自己注意を実装する
+
+# 3.4.1 Computing the attention weights step by step
+
+# LLMで使われる自己注意は、 scaled dot-product attention とも呼ばれる。
+# 3.3までの単純な注意機構との違いは、
+#  - モデルのトレーニング中に更新される weight行列sを導入すること。
+#  - このweight matricesは、よりよい context vectors を生成するために学習できる。
+
+
+# Wq, Wk, Wv の3つの training weight matricesを導入する。
+# これらの3つのtraining weight matricesは,
+# q(i) = x(i)Wq
+# k(i) = x(i)Wk
+# v(i) = x(i)Wv
+# というように、q,k,vの3つをそれぞれx(i)に対してかけ算して生成する。
+
+# The embedding dimensions of the input x  and the query vector q  can be the same or different, depending on the model's design and specific implementation
+# xとqの次数は違っててもいいよ
+
+# [15] In GPT models, the input and output dimensions are usually the same, but for illustration purposes, to better follow the computation, we choose different input and output dimensions here:
+# GPTとかだと大体同じ次数になるが、ここでは理解のために次数を異なるようにしてみる
+
+x_2 = inputs[1] # second input element
+d_in = inputs.shape[1] # the input embedding size, d=3
+d_out = 2 # the output embedding size, d=2
+
+# Below, we initialize the three weight matrices;  次に3種類のWを初期化する。
+# note that we are setting requires_grad=False to reduce clutter in the outputs for illustration purposes, but if we were to use the weight matrices for model training, we would set requires_grad=True to update these matrices during model training
+# requires_grad は、係数の更新が可能ならTrue.
+
+torch.manual_seed(123)
+
+W_query = torch.nn.Parameter(torch.rand(d_in, d_out), requires_grad=False)
+W_key   = torch.nn.Parameter(torch.rand(d_in, d_out), requires_grad=False)
+W_value = torch.nn.Parameter(torch.rand(d_in, d_out), requires_grad=False)
+
+# [17] Next we compute the query, key, and value vectors:
+# q,k,v を計算する
+
+query_2 = x_2 @ W_query # _2 because it's with respect to the 2nd input element
+key_2 = x_2 @ W_key 
+value_2 = x_2 @ W_value
+
+print(query_2)
+
+# [18] As we can see below, we successfully projected the 6 input tokens from a 3D onto a 2D embedding space:
+#
+
+keys = inputs @ W_key 
+values = inputs @ W_value
+
+print("keys.shape:", keys.shape) #  ここはあえて d_outが2になってて、 d_inの1とは違う値にしている。LLMはだいたい同じなんだけど。
+print("values.shape:", values.shape)
+
+
+
+# [19] In the next step, step 2, we compute the unnormalized attention scores by computing the dot product between the query and each key vector:
+
+# 次は、 query vectorとkey vector の内積を計算して、 attention scoresを計算する
+
+keys_2 = keys[1] # Python starts index at 0
+attn_score_22 = query_2.dot(keys_2)
+print(attn_score_22)
+
+# [20] Since we have 6 inputs, we have 6 attention scores for the given query vector:
+#
+attn_scores_2 = query_2 @ keys.T # All attention scores for given query
+print(attn_scores_2) # 6次のベクトルになった。
+
+# [21] Next, in step 3, we compute the attention weights (normalized attention scores that sum up to 1) using the softmax function we used earlier.
+# The difference to earlier is that we now scale the attention scores by dividing them by the square root of the embedding dimension,   (i.e., d_k**0.5):
+
+d_k = keys.shape[1]
+attn_weights_2 = torch.softmax(attn_scores_2 / d_k**0.5, dim=-1)
+print(attn_weights_2) # softmaxで正規化する。次元数の平方根で割る。1なら1だけどここでは2なので sqrt(2) で割ってる
+
+
+
+
+
+# [22] In step 4, we now compute the context vector for input query vector 2:
+
+context_vec_2 = attn_weights_2 @ values
+print(context_vec_2)  # d_out=2なので、2次のベクトルがcontext vectorが出力。これで3種類の Wを用いたcontext vectorが生成された。
+
+
+# 3.4.2 Implementing a compact SelfAttention class
+# [23] Putting it all together, we can implement the self-attention mechanism as follows:
+
+import torch.nn as nn
+
+class SelfAttention_v1(nn.Module):
+
+    def __init__(self, d_in, d_out):
+        super().__init__()
+        self.W_query = nn.Parameter(torch.rand(d_in, d_out))
+        self.W_key   = nn.Parameter(torch.rand(d_in, d_out))
+        self.W_value = nn.Parameter(torch.rand(d_in, d_out))
+
+    def forward(self, x):
+        keys = x @ self.W_key
+        queries = x @ self.W_query
+        values = x @ self.W_value
+        
+        attn_scores = queries @ keys.T # omega
+        attn_weights = torch.softmax(
+            attn_scores / keys.shape[-1]**0.5, dim=-1
+        )
+
+        context_vec = attn_weights @ values
+        return context_vec
+
+torch.manual_seed(123)
+sa_v1 = SelfAttention_v1(d_in, d_out)
+print(sa_v1(inputs))
+
+# [24] nn.Linearをつかったらもっとスッキリできます
+
+class SelfAttention_v2(nn.Module):
+
+    def __init__(self, d_in, d_out, qkv_bias=False):
+        super().__init__()
+        self.W_query = nn.Linear(d_in, d_out, bias=qkv_bias)
+        self.W_key   = nn.Linear(d_in, d_out, bias=qkv_bias)
+        self.W_value = nn.Linear(d_in, d_out, bias=qkv_bias)
+
+    def forward(self, x):
+        keys = self.W_key(x)
+        queries = self.W_query(x)
+        values = self.W_value(x)
+        
+        attn_scores = queries @ keys.T
+        attn_weights = torch.softmax(attn_scores / keys.shape[-1]**0.5, dim=-1)
+
+        context_vec = attn_weights @ values
+        return context_vec
+
+torch.manual_seed(789)
+sa_v2 = SelfAttention_v2(d_in, d_out)
+print(sa_v2(inputs))  #なんか値がだいぶ違うけど。。
+
+# Note that SelfAttention_v1 and SelfAttention_v2 give different outputs because they use different initial weights for the weight matrices
+# 初期Wが違うから値が違うと。
+# nn.Linearは乱数を用いて初期化される。それが、torch.randとは異なる。
+
+# 3.5 Hiding future words with causal attention
+
+
+
+
+
