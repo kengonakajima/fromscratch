@@ -3,3 +3,9 @@ model.pth
 __pycache__
 gpt2
 gpt2-small-124M.pth
+
+sms_spam_collection.zip
+sms_spam_collection/
+test.csv
+train.csv
+validation.csv
