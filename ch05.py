@@ -19,6 +19,10 @@ for p in pkgs:
 import torch
 import torch.nn as nn
 
+print("numthreads:",torch.get_num_threads())  # 現在の設定を確認
+torch.set_num_threads(16)        # デフォルトは8だった。16にしてもかわらない。CPU使い切れないなぁ
+
+
 class FeedForward(nn.Module):
     def __init__(self, cfg):
         super().__init__()
@@ -558,11 +562,8 @@ def calc_loss_loader(data_loader, model, device, num_batches=None):
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-if torch.backends.mps.is_available():
-    device = torch.device("mps")  # Apple Silicon GPU
-else:
-    device = torch.device("cpu")
-    
+# mpsは不安定になった
+
 # Note:
 # Uncommenting the following lines will allow the code to run on Apple Silicon chips, if applicable,
 # which is approximately 2x faster than on an Apple CPU (as measured on an M3 MacBook Air).
@@ -679,3 +680,32 @@ execution_time_minutes = (end_time - start_time) / 60
 print(f"Training completed in {execution_time_minutes:.2f} minutes.") # 2min
 
 
+# [28] graph
+
+
+import matplotlib.pyplot as plt
+from matplotlib.ticker import MaxNLocator
+
+
+def plot_losses(epochs_seen, tokens_seen, train_losses, val_losses):
+    fig, ax1 = plt.subplots(figsize=(5, 3))
+
+    # Plot training and validation loss against epochs
+    ax1.plot(epochs_seen, train_losses, label="Training loss")
+    ax1.plot(epochs_seen, val_losses, linestyle="-.", label="Validation loss")
+    ax1.set_xlabel("Epochs")
+    ax1.set_ylabel("Loss")
+    ax1.legend(loc="upper right")
+    ax1.xaxis.set_major_locator(MaxNLocator(integer=True))  # only show integer labels on x-axis
+
+    # Create a second x-axis for tokens seen
+    ax2 = ax1.twiny()  # Create a second x-axis that shares the same y-axis
+    ax2.plot(tokens_seen, train_losses, alpha=0)  # Invisible plot for aligning ticks
+    ax2.set_xlabel("Tokens seen")
+
+    fig.tight_layout()  # Adjust layout to make room
+    plt.savefig("loss-plot.pdf")
+    plt.show()
+
+epochs_tensor = torch.linspace(0, num_epochs, len(train_losses))
+plot_losses(epochs_tensor, tokens_seen, train_losses, val_losses)
