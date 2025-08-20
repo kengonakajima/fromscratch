@@ -238,3 +238,84 @@ out = ffn(x)
 print(out.shape)
 
 
+# 4.4 Adding shortcut connections
+
+# もともとショートカット接続は、コンピュータビジョンの深いネットワーク（残差ネットワーク, ResNet）において、勾配消失問題を緩和するために提案されました。
+# ショートカット接続は、勾配がネットワークを流れる際に通ることができるより短い経路を提供します。
+# これは、ある層の出力を、（間に1層以上を飛ばして）後の層の出力に加えることで実現されます。
+
+# [18]
+
+class ExampleDeepNeuralNetwork(nn.Module):
+    def __init__(self, layer_sizes, use_shortcut):
+        super().__init__()
+        self.use_shortcut = use_shortcut
+        self.layers = nn.ModuleList([
+            nn.Sequential(nn.Linear(layer_sizes[0], layer_sizes[1]), GELU()),
+            nn.Sequential(nn.Linear(layer_sizes[1], layer_sizes[2]), GELU()),
+            nn.Sequential(nn.Linear(layer_sizes[2], layer_sizes[3]), GELU()),
+            nn.Sequential(nn.Linear(layer_sizes[3], layer_sizes[4]), GELU()),
+            nn.Sequential(nn.Linear(layer_sizes[4], layer_sizes[5]), GELU())
+        ])
+
+    def forward(self, x):
+        for layer in self.layers:
+            # Compute the output of the current layer
+            layer_output = layer(x)
+            # Check if shortcut can be applied
+            if self.use_shortcut and x.shape == layer_output.shape:
+                x = x + layer_output
+            else:
+                x = layer_output
+        return x
+
+
+def print_gradients(model, x):
+    # Forward pass
+    output = model(x)
+    target = torch.tensor([[0.]])
+
+    # Calculate loss based on how close the target
+    # and output are
+    loss = nn.MSELoss()
+    loss = loss(output, target)
+    
+    # Backward pass to calculate the gradients
+    loss.backward()
+
+    for name, param in model.named_parameters():
+        if 'weight' in name:
+            # Print the mean absolute gradient of the weights
+            print(f"{name} has gradient mean of {param.grad.abs().mean().item()}")
+
+# 例示用の、deep な NN
+# gradient : 勾配
+
+# [19] Let's print the gradient values first without shortcut connections:
+
+layer_sizes = [3, 3, 3, 3, 3, 1]  
+
+sample_input = torch.tensor([[1., 0., -1.]])
+
+torch.manual_seed(123)
+model_without_shortcut = ExampleDeepNeuralNetwork(
+    layer_sizes, use_shortcut=False
+)
+print_gradients(model_without_shortcut, sample_input)
+
+# [20] Next, let's print the gradient values with shortcut connections:
+
+torch.manual_seed(123)
+model_with_shortcut = ExampleDeepNeuralNetwork(
+    layer_sizes, use_shortcut=True
+)
+print_gradients(model_with_shortcut, sample_input)
+
+
+
+# 上の出力から分かるように、ショートカット接続は初期の層（layer.0 付近）で勾配が消失するのを防ぎます。
+# shortcutなしだと、0.00020173587836325169とかになってしまう。
+# まあようするに偏るということだなぁ。
+# デメリットは、恒等変換になりやすいこと、計算コストちょっと高くなること。
+
+
