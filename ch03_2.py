@@ -266,6 +266,86 @@ print(sa_v2(inputs))  #なんか値がだいぶ違うけど。。
 # 3.5 Hiding future words with causal attention
 
 
+# In causal attention, the attention weights above the diagonal are masked, ensuring that for any given input, the LLM is unable to utilize future tokens while calculating the context vectors with the attention weight
+# 因果的（causal）アテンションでは、対角線より上のアテンション重みがマスクされる。これにより、任意の入力に対して、LLM は文脈ベクトルをアテンション重みで計算する際に未来のトークンを利用できないようにしている。
+# ここでいう 因果的 (causal) とは、「原因があって結果が生じる」 という時間的な一方向性を守る、という意味です。
 
+# attention weightの 6x6の行列の右上部分についてマスクしてしまう。
+
+# 3.5.1 Applying a causal attention mask
+
+
+# このセクションでは、前の自己注意メカニズムを 因果的自己注意メカニズム に変換します。
+# 因果的自己注意は、系列中のある位置に対するモデルの予測が、その位置より後のトークンではなく、既知の前の位置の出力のみに依存するようにするものです。
+# 簡単に言えば、次の単語の予測は常に直前までの単語にのみ依存するようにします。
+# これを実現するために、各トークンについて、そのトークン以降（入力テキスト中で後に出現するトークン）をマスクします。
+
+# [25] To illustrate and implement causal self-attention, let's work with the attention scores and weights from the previous section:
+#
+
+# Reuse the query and key weight matrices of the
+# SelfAttention_v2 object from the previous section for convenience
+queries = sa_v2.W_query(inputs)  # 計算済みのWqの値
+keys = sa_v2.W_key(inputs)    # 計算済みの Wkの値
+attn_scores = queries @ keys.T
+
+attn_weights = torch.softmax(attn_scores / keys.shape[-1]**0.5, dim=-1)
+print(attn_weights)
+
+
+# [26] The simplest way to mask out future attention weights is by creating a mask via PyTorch's tril function with elements below the main diagonal (including the diagonal itself) set to 1 and above the main diagonal set to 0:
+
+context_length = attn_scores.shape[0] # 6
+mask_simple = torch.tril(torch.ones(context_length, context_length)) # 右上だけ0にするやつ
+print(mask_simple)
+
+# [27] Then, we can multiply the attention weights with this mask to zero out the attention scores above the diagonal:
+# 1,0のマスクをかけたらOK
+
+masked_simple = attn_weights*mask_simple
+print(masked_simple)
+
+#マスクすると正規化が壊れるので、re-normalizeする必要ある。
+
+# [28] To make sure that the rows sum to 1, we can normalize the attention weights as follows:
+
+row_sums = masked_simple.sum(dim=-1, keepdim=True)
+masked_simple_norm = masked_simple / row_sums
+print(masked_simple_norm)
+
+
+# [29] つまり、対角線より上の注意重みをゼロにして結果を再正規化する代わりに、softmax関数に入力する前に、対角線より上の非正規化注意スコアを負の無限大でマスクすることができます。
+
+mask = torch.triu(torch.ones(context_length, context_length), diagonal=1)
+masked = attn_scores.masked_fill(mask.bool(), -torch.inf)
+print(masked) # これはスコアです
+
+
+
+# [30] As we can see below, now the attention weights in each row correctly sum to 1 again:
+
+attn_weights = torch.softmax(masked / keys.shape[-1]**0.5, dim=-1)
+print(attn_weights) # 正規化して重みになった。
+
+
+# 3.5.2 Masking additional attention weights with dropout
+# ドロップアウトによって過学習を防ぐ。不必要なつながりをなくせる。　面白いなぁ
+# ここではランダムドロップアウト率を0.5とするが、GPT2だと0.1とか0.2。
+
+# If we apply a dropout rate of 0.5 (50%), the non-dropped values will be scaled accordingly by a factor of 1/0.5 = 2
+# The scaling is calculated by the formula 1 / (1 - dropout_rate)
+# [31] ドロップアウトするので、その率に応じてスケーリングする必要がある。
+
+torch.manual_seed(123)
+dropout = torch.nn.Dropout(0.5) # dropout rate of 50%
+example = torch.ones(6, 6) # create a matrix of ones
+
+print(dropout(example)) # ランダムな2と0からなる6x6行列
+
+
+# [32]
+
+torch.manual_seed(123)
+print(dropout(attn_weights)) #なんか合計が1越えてる
 
 
