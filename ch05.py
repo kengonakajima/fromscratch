@@ -789,3 +789,11 @@ token_ids = generate(
 
 print("Output text:\n", token_ids_to_text(token_ids, tokenizer))
 
+
+
+
+# 5.4 Loading and saving model weights in PyTorch
+
+
+# [42]
+torch.save(model.state_dict(), "model.pth")
