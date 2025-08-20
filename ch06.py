@@ -633,3 +633,186 @@ print(token_ids_to_text(token_ids, tokenizer))
 
 # 6.5 Adding a classification head
 
+# [21]
+
+print(model)
+
+# [22] まずfreezeしておく。output layer以外いじらん
+
+for param in model.parameters():
+    param.requires_grad = False
+
+# [23] 768の出力ベクトルを2にしぼる。spam/hamだから2
+
+torch.manual_seed(123)
+
+# こんなに簡単にモデルを変更できるんだなぁ。
+num_classes = 2
+model.out_head = torch.nn.Linear(in_features=BASE_CONFIG["emb_dim"], out_features=num_classes)
+
+
+# 出力層だけを学習する方法はシンプルで計算コストも小さい。
+# でも実際には、最後のトランスフォーマーブロックと LayerNorm も一緒に学習させた方が精度が上がる。
+
+# [24]
+for param in model.trf_blocks[-1].parameters():
+    param.requires_grad = True
+
+for param in model.final_norm.parameters():
+    param.requires_grad = True
+
+# [25] input 試してみる
+
+inputs = tokenizer.encode("Do you have time")
+inputs = torch.tensor(inputs).unsqueeze(0)
+print("Inputs:", inputs)
+print("Inputs dimensions:", inputs.shape) # shape: (batch_size, num_tokens)
+
+# サイズが変わってる。
+
+# [26]
+
+with torch.no_grad():
+    outputs = model(inputs)
+
+print("Outputs:\n", outputs)
+print("Outputs dimensions:", outputs.shape) # shape: (batch_size, num_tokens, num_classes)
+
+# GPT系は「因果マスク」によって未来のトークンを見ない。
+# だから最後のトークンが 一番「全部を見た」情報を持っている。
+# 分類タスクでは、その最後のトークンの埋め込みを取り出して活用する。
+
+# [27]
+
+print("Last output token:", outputs[:, -1, :])
+
+# [28]
+
+print("Last output token:", outputs[:, -1, :])
+
+# [29]
+probas = torch.softmax(outputs[:, -1, :], dim=-1)
+label = torch.argmax(probas)
+print("Class label:", label.item())
+
+# [30]
+
+logits = outputs[:, -1, :]
+label = torch.argmax(logits)
+print("Class label:", label.item())
+
+# モデルが出すロジット（各クラスのスコア）から argmax を取る → 予測ラベル。
+# それを正解ラベル（教師データ）と比べる。
+# 「正解数 ÷ 全データ数」をとる → これが accuracy（精度）。
+
+# 普通の GPT は「次の単語」を予測するために最後のトークンを次の入力に使う。
+# 分類タスクでは「次の単語」じゃなくて「ラベル」を予測したいので、最後のトークンの隠れ状態をそのまま「文章表現」とみなし、クラス分類に使う。
+
+
+# 最後のトークンのベクトル = 文全体の特徴表現
+# それを 線形層に通してクラススコアを計算
+# softmax → クラス確率、argmax → 予測ラベル
+
+# 出力は、入力のシフト版!
+
+# [31]
+
+def calc_accuracy_loader(data_loader, model, device, num_batches=None):
+    model.eval()
+    correct_predictions, num_examples = 0, 0
+
+    if num_batches is None:
+        num_batches = len(data_loader)
+    else:
+        num_batches = min(num_batches, len(data_loader))
+    for i, (input_batch, target_batch) in enumerate(data_loader):
+        if i < num_batches:
+            input_batch, target_batch = input_batch.to(device), target_batch.to(device)
+
+            with torch.no_grad():
+                logits = model(input_batch)[:, -1, :]  # Logits of last output token
+            predicted_labels = torch.argmax(logits, dim=-1)
+
+            num_examples += predicted_labels.shape[0]
+            correct_predictions += (predicted_labels == target_batch).sum().item()
+        else:
+            break
+    return correct_predictions / num_examples
+
+# [32] Let's apply the function to calculate the classification accuracies for the different datasets:
+
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+# Note:
+# Uncommenting the following lines will allow the code to run on Apple Silicon chips, if applicable,
+# which is approximately 2x faster than on an Apple CPU (as measured on an M3 MacBook Air).
+# As of this writing, in PyTorch 2.4, the results obtained via CPU and MPS were identical.
+# However, in earlier versions of PyTorch, you may observe different results when using MPS.
+
+#if torch.cuda.is_available():
+#    device = torch.device("cuda")
+#elif torch.backends.mps.is_available():
+#    device = torch.device("mps")
+#else:
+#    device = torch.device("cpu")
+#print(f"Running on {device} device.")
+
+model.to(device) # no assignment model = model.to(device) necessary for nn.Module classes
+
+torch.manual_seed(123) # For reproducibility due to the shuffling in the training data loader
+
+train_accuracy = calc_accuracy_loader(train_loader, model, device, num_batches=10)
+val_accuracy = calc_accuracy_loader(val_loader, model, device, num_batches=10)
+test_accuracy = calc_accuracy_loader(test_loader, model, device, num_batches=10)
+
+print(f"Training accuracy: {train_accuracy*100:.2f}%")
+print(f"Validation accuracy: {val_accuracy*100:.2f}%")
+print(f"Test accuracy: {test_accuracy*100:.2f}%")
+
+
+# [33]
+
+def calc_loss_batch(input_batch, target_batch, model, device):
+    input_batch, target_batch = input_batch.to(device), target_batch.to(device)
+    logits = model(input_batch)[:, -1, :]  # Logits of last output token
+    loss = torch.nn.functional.cross_entropy(logits, target_batch)
+    return loss
+# [34] The calc_loss_loader is exactly the same as in chapter 5
+
+
+# Same as in chapter 5
+def calc_loss_loader(data_loader, model, device, num_batches=None):
+    total_loss = 0.
+    if len(data_loader) == 0:
+        return float("nan")
+    elif num_batches is None:
+        num_batches = len(data_loader)
+    else:
+        # Reduce the number of batches to match the total number of batches in the data loader
+        # if num_batches exceeds the number of batches in the data loader
+        num_batches = min(num_batches, len(data_loader))
+    for i, (input_batch, target_batch) in enumerate(data_loader):
+        if i < num_batches:
+            loss = calc_loss_batch(input_batch, target_batch, model, device)
+            total_loss += loss.item()
+        else:
+            break
+    return total_loss / num_batches
+
+# [35] Using the calc_closs_loader, we compute the initial training, validation, and test set losses before we start training
+
+
+with torch.no_grad(): # Disable gradient tracking for efficiency because we are not training, yet
+    train_loss = calc_loss_loader(train_loader, model, device, num_batches=5)
+    val_loss = calc_loss_loader(val_loader, model, device, num_batches=5)
+    test_loss = calc_loss_loader(test_loader, model, device, num_batches=5)
+
+print(f"Training loss: {train_loss:.3f}") # 2.453
+print(f"Validation loss: {val_loss:.3f}") # 2.583
+print(f"Test loss: {test_loss:.3f}") # 2.322
+
+
+# In the next section, we train the model to improve the loss values and consequently the classification accuracy
+
+
