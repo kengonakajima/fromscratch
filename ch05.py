@@ -458,7 +458,7 @@ def create_dataloader_v1(txt, batch_size=4, max_length=256,
 # Alternatively:
 # from llms_from_scratch.ch02 import create_dataloader_v1
 
-# Train/validation ratio
+# Train/validation ratio  : 90%を学習用にする
 train_ratio = 0.90
 split_idx = int(train_ratio * len(text_data))
 train_data = text_data[:split_idx]
