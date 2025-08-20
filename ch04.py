@@ -454,3 +454,100 @@ output = block(x)
 print("Input shape:", x.shape) # torch.Size([2,4,768])
 print("Output shape:", output.shape) # torch.Size([2,4,768])
 
+
+# 4.6 Coding the GPT model
+
+# dummyGPTに、transformer blockを埋め込むと本物になる。
+
+# ここで注意すべきは、トランスフォーマーブロックが複数回繰り返されるという点です。
+# 例えば、一番小さいGPT-2モデル（124Mパラメータ）では、トランスフォーマーブロックを12回繰り返します。
+# トランスフォーマーブロックは「積み重ねて深くすることで性能を上げる」仕組み
+
+# 変換（transform）するモデル 
+# 入力されたシーケンス（単語列）を、自己注意 (self-attention) を通じて 別の表現空間に変換 する。
+# つまり、「入力表現 → 文脈を考慮した新しい表現」への 変換器 (transformer) というイメージ。
+# それまでのRNNやCNNは「系列を逐次処理」や「局所パターンの畳み込み」だったのに対し、
+# Transformerは attention という演算だけで系列を変換 する新しい枠組みだったため、
+# 「変換の仕組み（transform）」にちなんで命名された。
+
+# [23] The corresponding code implementation, where cfg["n_layers"] = 12:
+
+class GPTModel(nn.Module):
+    def __init__(self, cfg):
+        super().__init__()
+        self.tok_emb = nn.Embedding(cfg["vocab_size"], cfg["emb_dim"])
+        self.pos_emb = nn.Embedding(cfg["context_length"], cfg["emb_dim"])
+        self.drop_emb = nn.Dropout(cfg["drop_rate"])
+        
+        self.trf_blocks = nn.Sequential( # 単純に重ねてる
+            *[TransformerBlock(cfg) for _ in range(cfg["n_layers"])])
+        
+        self.final_norm = LayerNorm(cfg["emb_dim"])
+        self.out_head = nn.Linear(
+            cfg["emb_dim"], cfg["vocab_size"], bias=False
+        )
+
+    def forward(self, in_idx):
+        batch_size, seq_len = in_idx.shape
+        tok_embeds = self.tok_emb(in_idx)
+        pos_embeds = self.pos_emb(torch.arange(seq_len, device=in_idx.device))
+        x = tok_embeds + pos_embeds  # Shape [batch_size, num_tokens, emb_size]
+        x = self.drop_emb(x)
+        x = self.trf_blocks(x)
+        x = self.final_norm(x)
+        logits = self.out_head(x)
+        return logits
+    
+# [24] Using the configuration of the 124M parameter model, we can now instantiate this GPT model with random initial weights as follows:
+
+# ランダム値で初期化する
+
+torch.manual_seed(123)
+model = GPTModel(GPT_CONFIG_124M)
+
+out = model(batch)
+print("Input batch:\n", batch)
+print("\nOutput shape:", out.shape)
+print(out)
+
+# 次章でこれをtrainする
+
+
+# [25] However, a quick note about its size: we previously referred to it as a 124M parameter model; we can double check this number as follows:
+
+# いちおうサイズを確認しとく
+
+
+total_params = sum(p.numel() for p in model.parameters())
+print(f"Total number of parameters: {total_params:,}") # 163,009,536
+
+# PyTorch の numel() は、 テンソルの中の要素数（number of elements）を返す関数 です。
+# 163mが 124mよr多い。
+# GPTはweight tying を採用しているので、 tok_emb 38.6m = 50257 * 768 と  out_head の 768 * 50257 が重複カウントされる。
+# 同じデータを使って節約しているので引く必要がある。
+
+# [26] いちおうみとく
+
+print("Token embedding layer shape:", model.tok_emb.weight.shape)
+print("Output layer shape:", model.out_head.weight.shape)
+
+# [27]
+total_params_gpt2 =  total_params - sum(p.numel() for p in model.out_head.parameters())
+print(f"Number of trainable parameters considering weight tying: {total_params_gpt2:,}")
+
+# 最初は学習用に weight tyingは採用しないがGPT-2では必須。
+
+# [28]
+
+# Calculate the total size in bytes (assuming float32, 4 bytes per parameter)
+total_size_bytes = total_params * 4
+
+# Convert to megabytes
+total_size_mb = total_size_bytes / (1024 * 1024)
+
+print(f"Total size of the model: {total_size_mb:.2f} MB")  # 621.83MB
+
+
+
+
+
