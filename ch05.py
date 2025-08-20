@@ -709,3 +709,27 @@ def plot_losses(epochs_seen, tokens_seen, train_losses, val_losses):
 
 epochs_tensor = torch.linspace(0, num_epochs, len(train_losses))
 plot_losses(epochs_tensor, tokens_seen, train_losses, val_losses)
+
+# 5.3 Decoding strategies to control randomness
+
+
+# [29]
+
+model.to("cpu")
+model.eval()
+
+tokenizer = tiktoken.get_encoding("gpt2")
+
+token_ids = generate_text_simple(
+    model=model,
+    idx=text_to_token_ids("Every effort moves you", tokenizer),
+    max_new_tokens=25,
+    context_size=GPT_CONFIG_124M["context_length"]
+)
+
+print("Output text:\n", token_ids_to_text(token_ids, tokenizer))
+
+# 5.3.1 Temperature scaling
+
+# [30] Here's a little recap of generating the next token, assuming a very small vocabulary for illustration purposes:
+
