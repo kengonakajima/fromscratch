@@ -547,6 +547,80 @@ total_size_mb = total_size_bytes / (1024 * 1024)
 
 print(f"Total size of the model: {total_size_mb:.2f} MB")  # 621.83MB
 
+# [29] greedy decoding
+
+# logitsとは、 NNの最後の層の生の出力。
+# それを、確率分布に変換する。その中でもっとも確率が高いやつを選ぶからgreedy
+
+# テキスト生成における logitsからとりだす処理
+
+# greedy decoding（貪欲法） : argmax だけで十分（確率分布全体は不要） ベクトルの中で一番大きい値の「インデックス（位置）」を返す. 0~50256
+# ランダム性を加えるサンプリング（temperature, top-k, top-p） : softmax で確率分布を求めてから、その確率に従ってサンプリング
+
+# [29] テキスト生成
+
+def generate_text_simple(model, idx, max_new_tokens, context_size):
+    # idx is (batch, n_tokens) array of indices in the current context
+    for _ in range(max_new_tokens):
+        
+        # Crop current context if it exceeds the supported context size
+        # E.g., if LLM supports only 5 tokens, and the context size is 10
+        # then only the last 5 tokens are used as context
+        idx_cond = idx[:, -context_size:]
+        
+        # Get the predictions
+        with torch.no_grad():
+            logits = model(idx_cond)
+        
+        # Focus only on the last time step
+        # (batch, n_tokens, vocab_size) becomes (batch, vocab_size)
+        logits = logits[:, -1, :]  
+
+        # Apply softmax to get probabilities
+        probas = torch.softmax(logits, dim=-1)  # (batch, vocab_size)
+
+        # Get the idx of the vocab entry with the highest probability value
+        idx_next = torch.argmax(probas, dim=-1, keepdim=True)  # (batch, 1)
+
+        # Append sampled index to the running sequence
+        idx = torch.cat((idx, idx_next), dim=1)  # (batch, n_tokens+1)
+
+    return idx
+
+# The generate_text_simple above implements an iterative process, where it creates one token at a time
+# 1トークンづつだす
+
+# [30] Let's prepare an input example:
+
+start_context = "Hello, I am"
+
+encoded = tokenizer.encode(start_context)
+print("encoded:", encoded)
+
+encoded_tensor = torch.tensor(encoded).unsqueeze(0)
+print("encoded_tensor.shape:", encoded_tensor.shape)
+
+# [31]
+
+model.eval() # disable dropout
+
+out = generate_text_simple(
+    model=model,
+    idx=encoded_tensor, 
+    max_new_tokens=6, 
+    context_size=GPT_CONFIG_124M["context_length"]
+)
+
+print("Output:", out)
+print("Output length:", len(out[0]))
+
+# [32] Remove batch dimension and convert back into text:
+
+
+decoded_text = tokenizer.decode(out.squeeze(0).tolist())
+print(decoded_text)
+
+
 
 
 
