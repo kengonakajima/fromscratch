@@ -9,3 +9,4 @@ sms_spam_collection/
 test.csv
 train.csv
 validation.csv
+review_classifier.pth
